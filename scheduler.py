@@ -1,117 +1,132 @@
 from ortools.sat.python import cp_model
 import pandas as pd
-from datetime import date, timedelta
-
-
-class SchedulerError(Exception):
-    """Errores propios del planificador."""
-    pass
+import datetime
 
 
 class Scheduler:
-    TURNS = {
-        0: "Apertura",
-        1: "Cierre",
-        2: "Intermedio"
-    }
+    def __init__(self, year, month, asesor_fijo_apertura, num_semanas):
+        if num_semanas < 1 or num_semanas > 8:
+            raise ValueError("El número de semanas debe estar entre 1 y 8.")
 
-    def __init__(
-        self,
-        advisors,
-        start_date,
-        holidays=None,
-        fixed_opening_worker=None,
-    ):
-        if len(advisors) != 3:
-            raise SchedulerError("El modelo requiere exactamente 3 asesores.")
+        self.year = year
+        self.month = month
+        self.asesores = ["A1", "A2", "A3"]
+        self.fijo = asesor_fijo_apertura  # puede ser A1, A2, A3 o "Ninguno"
+        self.num_semanas = num_semanas
 
-        self.advisors = advisors
-        self.start_date = start_date
-        self.holidays = set(holidays or [])
-        self.fixed_opening_worker = fixed_opening_worker
+        # Determinar quiénes rotan
+        if self.fijo != "Ninguno":
+            self.rotan = [a for a in self.asesores if a != self.fijo]
+        else:
+            self.rotan = self.asesores.copy()
 
-        self.days = self._generate_days()
+        self.turnos = ["Apertura", "Cierre", "Intermedio"]
 
-        if not self.days:
-            raise SchedulerError("No hay días laborales disponibles.")
+    # -------------------------------------------------------------
+    def generar_fechas(self):
+        """Genera fechas según las semanas solicitadas, omitiendo domingos."""
+        dias_totales = self.num_semanas * 7
+        inicio = datetime.date(self.year, self.month, 1)
 
-    def _generate_days(self):
-        """Genera los 7 días de la semana, excluyendo domingos y festivos."""
-        days = []
-        for i in range(7):
-            d = self.start_date + timedelta(days=i)
-            if d.weekday() == 6:  # domingo
-                continue
-            if d in self.holidays:
-                continue
-            days.append(d)
-        return days
+        fechas = []
+        dia = inicio
 
-    def solve(self):
+        for _ in range(dias_totales):
+            if dia.weekday() != 6:  # omitir domingo
+                fechas.append(dia)
+            dia += datetime.timedelta(days=1)
+
+        if len(fechas) == 0:
+            raise RuntimeError("No hay fechas válidas para generar la planeación.")
+
+        return fechas
+
+    # -------------------------------------------------------------
+    def planear(self):
+        try:
+            fechas = self.generar_fechas()
+        except Exception as e:
+            raise RuntimeError(f"Error generando fechas: {e}")
+
+        semanas = list(range(1, self.num_semanas + 1))
         model = cp_model.CpModel()
 
-        x = {}
+        # variables
+        turno = {}
+        for a in self.asesores:
+            for s in semanas:
+                for t in self.turnos:
+                    turno[(a, s, t)] = model.NewBoolVar(f"{a}_{s}_{t}")
 
-        # Variables: x[a][d][t]
-        for a in range(3):
-            for d in range(len(self.days)):
-                for t in range(3):
-                    x[(a, d, t)] = model.NewBoolVar(f"x_a{a}_d{d}_t{t}")
+        # -------------------------------------------------------------
+        # 1. Si hay asesor fijo, asegurarlo en Apertura
+        # -------------------------------------------------------------
+        if self.fijo != "Ninguno":
+            for s in semanas:
+                model.Add(turno[(self.fijo, s, "Apertura")] == 1)
+                model.Add(turno[(self.fijo, s, "Cierre")] == 0)
+                model.Add(turno[(self.fijo, s, "Intermedio")] == 0)
 
-        # REGLA 1: Cada asesor tiene un único turno por semana
-        turno_asignado = {}
-        for a in range(3):
-            for t in range(3):
-                turno_asignado[(a, t)] = model.NewBoolVar(f"turno_a{a}_t{t}")
+        # -------------------------------------------------------------
+        # 2. Cada asesor solo un turno por semana
+        # -------------------------------------------------------------
+        for a in self.asesores:
+            for s in semanas:
+                model.Add(sum(turno[(a, s, t)] for t in self.turnos) == 1)
 
-            model.Add(sum(turno_asignado[(a, t)] for t in range(3)) == 1)
+        # -------------------------------------------------------------
+        # 3. Todos los turnos se asignan por semana
+        # -------------------------------------------------------------
+        for s in semanas:
+            for t in self.turnos:
+                model.Add(sum(turno[(a, s, t)] for a in self.asesores) == 1)
 
-        # Vincular turno semanal con los días
-        for a in range(3):
-            for d in range(len(self.days)):
-                model.Add(sum(x[(a, d, t)] for t in range(3)) == 1)
-                for t in range(3):
-                    model.Add(x[(a, d, t)] >= turno_asignado[(a, t)])
-                    model.Add(x[(a, d, t)] <= turno_asignado[(a, t)])
+        # -------------------------------------------------------------
+        # 4. Rotación entre los asesores que rotan
+        # -------------------------------------------------------------
+        for a in self.rotan:
+            for s in range(1, self.num_semanas):
+                # Evitar repetir Cierre
+                model.Add(turno[(a, s, "Cierre")] + turno[(a, s + 1, "Cierre")] <= 1)
+                # Evitar repetir Intermedio
+                model.Add(turno[(a, s, "Intermedio")] + turno[(a, s + 1, "Intermedio")] <= 1)
+                # Evitar repetir Apertura si NO hay un fijo
+                if self.fijo == "Ninguno":
+                    model.Add(turno[(a, s, "Apertura")] + turno[(a, s + 1, "Apertura")] <= 1)
 
-        # REGLA 2: Cada turno solo lo cubre 1 asesor por día
-        for d in range(len(self.days)):
-            for t in range(3):
-                model.Add(sum(x[(a, d, t)] for a in range(3)) == 1)
-
-        # REGLA 3 (opcional): asesora fija solo en apertura
-        if self.fixed_opening_worker:
-            idx = self.advisors.index(self.fixed_opening_worker)
-
-            model.Add(turno_asignado[(idx, 0)] == 1)
-            model.Add(turno_asignado[(idx, 1)] == 0)
-            model.Add(turno_asignado[(idx, 2)] == 0)
-
+        # -------------------------------------------------------------
         # Resolver
+        # -------------------------------------------------------------
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 10
+        solver.parameters.max_time_in_seconds = 6
+        solver.parameters.num_search_workers = 8
 
-        status = solver.Solve(model)
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            raise SchedulerError("No se encontró solución viable.")
+        try:
+            result = solver.Solve(model)
+        except Exception as e:
+            raise RuntimeError(f"Error ejecutando CP-SAT: {e}")
 
-        rows = []
-        for d_idx, day in enumerate(self.days):
-            for a_idx, asesor in enumerate(self.advisors):
-                for t in range(3):
-                    if solver.Value(x[(a_idx, d_idx, t)]) == 1:
-                        rows.append({
-                            "date": day,
-                            "asesor": asesor,
-                            "turno_id": t,
-                            "turno": self.TURNS[t]
-                        })
+        if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            raise RuntimeError("El modelo no tiene solución con las restricciones actuales.")
 
-        df = pd.DataFrame(rows)
-        pivot = df.pivot(index="date", columns="turno", values="asesor").reset_index()
+        # -------------------------------------------------------------
+        # Construcción del DataFrame por fechas
+        # -------------------------------------------------------------
+        registros = []
 
-        return {
-            "raw": df,
-            "pivot": pivot
-        }
+        for fecha in fechas:
+            dias = (fecha - fechas[0]).days
+            semana = (dias // 7) + 1
+
+            fila = {"Fecha": fecha}
+
+            for t in self.turnos:
+                for a in self.asesores:
+                    if solver.Value(turno[(a, semana, t)]) == 1:
+                        fila[t] = a
+
+            registros.append(fila)
+
+        return pd.DataFrame(registros)
+
 

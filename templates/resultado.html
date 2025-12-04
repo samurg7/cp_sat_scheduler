@@ -1,19 +1,23 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
     <title>Resultado</title>
 </head>
 <body>
+
     <h1>Planeación Generada</h1>
 
-    <div>
-        {{ tabla|safe }}
-    </div>
+    {{ tabla | safe }}
+
+    <br><br>
+
+    <a href="/descargar_csv">
+        <button>Descargar CSV</button>
+    </a>
 
     <br><br>
 
     <a href="/">Volver</a>
+
 </body>
 </html>
-

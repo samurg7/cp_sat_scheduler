@@ -1,34 +1,42 @@
-from flask import Flask, render_template, request
-from datetime import date
+from flask import Flask, render_template, request, send_file
 from scheduler import Scheduler
+import pandas as pd
 
 app = Flask(__name__)
 
+df_global = None
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
+@app.route("/planear", methods=["POST"])
+def planear():
+    global df_global
 
-@app.route("/plan", methods=["POST"])
-def plan():
-    start_date = request.form.get("fecha")
-    apertura_fija = request.form.get("apertura_fija")
+    try:
+        asesor_fijo = request.form.get("asesor_fijo")
+        semanas = int(request.form.get("semanas"))
 
-    advisors = ["A1", "A2", "A3"]
+        scheduler = Scheduler(2025, 12, asesor_fijo, semanas)
+        df_global = scheduler.planear()
 
-    scheduler = Scheduler(
-        advisors=advisors,
-        start_date=date.fromisoformat(start_date),
-        holidays=[],
-        fixed_opening_worker=apertura_fija if apertura_fija else None
-    )
+        tabla = df_global.to_html(classes="table table-bordered", index=False)
+        return render_template("resultado.html", tabla=tabla)
 
-    result = scheduler.solve()
-    html_table = result["pivot"].to_html(classes="table", index=False)
+    except Exception as e:
+        return render_template("resultado.html", tabla=f"<h3>Error: {e}</h3>")
 
-    return render_template("resultado.html", tabla=html_table)
 
+@app.route("/descargar_csv")
+def descargar_csv():
+    global df_global
+    if df_global is None:
+        return "No hay planeación generada."
+
+    ruta = "planeacion.csv"
+    df_global.to_csv(ruta, index=False)
+    return send_file(ruta, as_attachment=True)
 
 if __name__ == "__main__":
     app.run(debug=True)
