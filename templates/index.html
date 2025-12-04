@@ -1,1 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Planeación CP-SAT</title>
+</head>
+<body>
+    <h1>Generar Planeación Semanal</h1>
+
+    <form action="/plan" method="POST">
+        <label>Fecha de inicio (lunes):</label>
+        <input type="date" name="fecha" required>
+
+        <br><br>
+
+        <label>Asesora fija en apertura (opcional):</label>
+        <select name="apertura_fija">
+            <option value="">Ninguna</option>
+            <option value="A1">A1</option>
+            <option value="A2">A2</option>
+            <option value="A3">A3</option>
+        </select>
+
+        <br><br>
+        <button type="submit">Generar</button>
+    </form>
+</body>
+</html>
 
