@@ -1,1 +1,5 @@
+ortools==9.8.0
+Flask==2.3.3
+pandas==2.2.3
+pytest==7.4.0
 
